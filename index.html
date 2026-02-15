@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Factors to 25 Animation</title>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+(function(){
+  const root = document.getElementById("app")
+
+  const state = {
+    n: 12,
+    pairs: [],
+    pairIndex: 0,
+    playing: false,
+    t0: 0,
+    duration: 900,
+    from: [],
+    to: [],
+    positions: [],
+    raf: 0
+  }
+
+  function el(tag, parent){
+    const n = document.createElement(tag)
+    if(parent) parent.appendChild(n)
+    return n
+  }
+
+  function setStyles(node, styles){
+    for(const k in styles) node.style[k] = styles[k]
+  }
+
+  setStyles(document.body, {
+    margin: "0",
+    background: "#ffffff",
+    color: "#111",
+    fontFamily: "Times New Roman, Times, serif"
+  })
+
+  setStyles(root, {
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column"
+  })
+
+  const top = el("div", root)
+  setStyles(top, {
+    padding: "16px 18px 10px 18px",
+    borderBottom: "2px solid #111",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px 14px",
+    alignItems: "center"
+  })
+
+  const title = el("div", top)
+  title.textContent = "Break numbers to 25 into factors"
+  setStyles(title, { fontWeight: "700", fontSize: "18px", marginRight: "10px" })
+
+  const labelN = el("div", top)
+  labelN.textContent = "Number"
+  setStyles(labelN, { fontSize: "14px" })
+
+  const sel = el("select", top)
+  setStyles(sel, { fontSize: "14px", padding: "6px 8px" })
+  for(let i=2;i<=25;i++){
+    const o = document.createElement("option")
+    o.value = String(i)
+    o.textContent = String(i)
+    if(i === state.n) o.selected = true
+    sel.appendChild(o)
+  }
+
+  const btnPrev = el("button", top)
+  btnPrev.textContent = "Prev pair"
+  setStyles(btnPrev, { fontSize: "14px", padding: "6px 10px", cursor: "pointer" })
+
+  const btnNext = el("button", top)
+  btnNext.textContent = "Next pair"
+  setStyles(btnNext, { fontSize: "14px", padding: "6px 10px", cursor: "pointer" })
+
+  const btnPlay = el("button", top)
+  btnPlay.textContent = "Play"
+  setStyles(btnPlay, { fontSize: "14px", padding: "6px 10px", cursor: "pointer" })
+
+  const speedWrap = el("div", top)
+  speedWrap.textContent = "Speed"
+  setStyles(speedWrap, { fontSize: "14px" })
+
+  const speed = el("input", top)
+  speed.type = "range"
+  speed.min = "350"
+  speed.max = "1600"
+  speed.value = String(state.duration)
+  setStyles(speed, { width: "180px" })
+
+  const readout = el("div", top)
+  setStyles(readout, { fontSize: "14px", marginLeft: "auto", fontWeight: "700" })
+
+  const canvasWrap = el("div", root)
+  setStyles(canvasWrap, { flex: "1", display: "flex" })
+
+  const c = el("canvas", canvasWrap)
+  const ctx = c.getContext("2d")
+
+  function resize(){
+    const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1))
+    const w = canvasWrap.clientWidth
+    const h = canvasWrap.clientHeight
+    c.width = Math.floor(w * dpr)
+    c.height = Math.floor(h * dpr)
+    c.style.width = w + "px"
+    c.style.height = h + "px"
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    render()
+  }
+
+  window.addEventListener("resize", resize)
+
+  function factorPairs(n){
+    const out = []
+    for(let a=1;a<=n;a++){
+      if(n % a === 0){
+        const b = n / a
+        if(a <= b) out.push([a, b])
+      }
+    }
+    return out
+  }
+
+  function randomStartPositions(n, W, H){
+    const pad = 34
+    const left = pad
+    const top = pad + 18
+    const right = W - pad
+    const bottom = H - pad
+    const out = []
+    for(let i=0;i<n;i++){
+      const x = left + Math.random() * (right - left)
+      const y = top + Math.random() * (bottom - top)
+      out.push({x, y})
+    }
+    return out
+  }
+
+  function gridTargetPositions(n, rows, cols, W, H){
+    const out = []
+    const padX = 60
+    const padY = 70
+    const usableW = Math.max(120, W - padX * 2)
+    const usableH = Math.max(120, H - padY * 2)
+    const gap = Math.min(
+      usableW / Math.max(1, cols),
+      usableH / Math.max(1, rows)
+    )
+    const dotR = Math.max(6, Math.min(16, gap * 0.22))
+    const gridW = (cols - 1) * gap
+    const gridH = (rows - 1) * gap
+    const x0 = (W - gridW) / 2
+    const y0 = (H - gridH) / 2 + 14
+
+    let k = 0
+    for(let r=0;r<rows;r++){
+      for(let col=0;col<cols;col++){
+        if(k >= n) break
+        out.push({x: x0 + col * gap, y: y0 + r * gap, r: dotR})
+        k++
+      }
+    }
+    return out
+  }
+
+  function setNumber(n){
+    state.n = n
+    state.pairs = factorPairs(n)
+    state.pairIndex = 0
+    state.playing = false
+    btnPlay.textContent = "Play"
+    prepAnimation(true)
+  }
+
+  function setPairIndex(i){
+    if(state.pairs.length === 0) return
+    state.pairIndex = (i + state.pairs.length) % state.pairs.length
+    prepAnimation(false)
+  }
+
+  function prepAnimation(hardReset){
+    const W = canvasWrap.clientWidth
+    const H = canvasWrap.clientHeight
+
+    const pair = state.pairs[state.pairIndex] || [1, state.n]
+    const rows = pair[0]
+    const cols = pair[1]
+
+    const to = gridTargetPositions(state.n, rows, cols, W, H)
+
+    let from
+    if(hardReset || state.positions.length !== state.n){
+      from = randomStartPositions(state.n, W, H)
+      state.positions = from.map(p => ({x: p.x, y: p.y, r: to[0]?.r || 10}))
+    } else {
+      from = state.positions.map(p => ({x: p.x, y: p.y}))
+    }
+
+    state.from = from
+    state.to = to
+    state.t0 = performance.now()
+
+    readout.textContent = state.n + " = " + rows + " × " + cols + "   (pair " + (state.pairIndex + 1) + " of " + state.pairs.length + ")"
+
+    cancelAnimationFrame(state.raf)
+    state.raf = requestAnimationFrame(tick)
+  }
+
+  function easeInOut(t){
+    return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3)/2
+  }
+
+  function tick(now){
+    const W = canvasWrap.clientWidth
+    const H = canvasWrap.clientHeight
+
+    const t = Math.max(0, Math.min(1, (now - state.t0) / state.duration))
+    const e = easeInOut(t)
+
+    for(let i=0;i<state.n;i++){
+      const a = state.from[i] || {x: W/2, y: H/2}
+      const b = state.to[i] || {x: W/2, y: H/2, r: 10}
+      const x = a.x + (b.x - a.x) * e
+      const y = a.y + (b.y - a.y) * e
+      const r = b.r || 10
+      state.positions[i] = {x, y, r}
+    }
+
+    render()
+
+    if(t < 1){
+      state.raf = requestAnimationFrame(tick)
+      return
+    }
+
+    if(state.playing){
+      setTimeout(() => {
+        setPairIndex(state.pairIndex + 1)
+      }, 350)
+    }
+  }
+
+  function render(){
+    const W = canvasWrap.clientWidth
+    const H = canvasWrap.clientHeight
+
+    ctx.clearRect(0, 0, W, H)
+
+    ctx.fillStyle = "#111"
+    ctx.font = "16px Times New Roman, Times, serif"
+    ctx.textAlign = "center"
+    ctx.fillText("Factor model: arrange dots into rows and columns", W/2, 28)
+
+    const pair = state.pairs[state.pairIndex] || [1, state.n]
+    const rows = pair[0]
+    const cols = pair[1]
+
+    ctx.fillStyle = "#111"
+    ctx.font = "18px Times New Roman, Times, serif"
+    ctx.fillText(state.n + " = " + rows + " × " + cols, W/2, 56)
+
+    ctx.fillStyle = "#111"
+    for(const p of state.positions){
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.r || 10, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    const isPrime = state.pairs.length === 1 && state.pairs[0][0] === 1
+    ctx.font = "14px Times New Roman, Times, serif"
+    ctx.textAlign = "center"
+    ctx.fillText(isPrime ? "Prime number: only 1 × " + state.n : "Try another factor pair with Prev pair or Next pair", W/2, H - 18)
+  }
+
+  sel.addEventListener("change", () => setNumber(Number(sel.value)))
+  btnPrev.addEventListener("click", () => setPairIndex(state.pairIndex - 1))
+  btnNext.addEventListener("click", () => setPairIndex(state.pairIndex + 1))
+  btnPlay.addEventListener("click", () => {
+    state.playing = !state.playing
+    btnPlay.textContent = state.playing ? "Pause" : "Play"
+    if(state.playing) prepAnimation(false)
+  })
+  speed.addEventListener("input", () => {
+    state.duration = Math.max(200, Math.min(2500, Number(speed.value)))
+  })
+
+  setNumber(state.n)
+  resize()
+})()
+</script>
+</body>
+</html>
